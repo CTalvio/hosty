@@ -15,6 +15,10 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
+      - name: Install shellcheck (Ubuntu)
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: shellcheck hosty.sh install.sh updater.sh
       - name: Install dependencies
         run: sudo apt install expect
       - name: Run hosty with sudo
@@ -46,6 +50,10 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
+      - name: Install shellcheck (macOS)
+        run: brew install shellcheck
+      - name: Run shellcheck
+        run: shellcheck hosty.sh install.sh updater.sh
       - name: Run hosty with sudo
         run: sudo $GITHUB_WORKSPACE/hosty.sh
       - name: Run hosty in debug mode
@@ -76,8 +84,12 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
+      - name: Install shellcheck (Alpine)
+        run: apk add --no-cache shellcheck
+      - name: Run shellcheck
+        run: shellcheck hosty.sh install.sh updater.sh
       - name: Install dependencies
-        run: apk add curl gnupg expect
+        run: apk add --no-cache curl gnupg expect
       - name: Run hosty without sudo
         run: $GITHUB_WORKSPACE/hosty.sh
       - name: Run hosty in debug mode

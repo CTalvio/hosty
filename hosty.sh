@@ -2,6 +2,35 @@
 
 set -euf
 
+# Global variables for temporary files
+user_hosts_file=""
+blacklist_sources=""
+whitelist_sources=""
+blacklist_domains=""
+whitelist_domains=""
+final_hosts_file=""
+previous_crontab=""
+new_crontab=""
+# tmp_domains is handled locally in process_domain_list
+tmp_downloadFile=""
+
+# Function to clean up temporary files
+cleanup_temp_files() {
+  debug_echo "Cleaning up temporary files..."
+  rm -f "$user_hosts_file" \
+    "$blacklist_sources" \
+    "$whitelist_sources" \
+    "$blacklist_domains" \
+    "$whitelist_domains" \
+    "$final_hosts_file" \
+    "$previous_crontab" \
+    "$new_crontab" \
+    "$tmp_downloadFile" # Removed tmp_domains
+}
+
+# Trap EXIT, TERM, INT signals to run cleanup function
+trap cleanup_temp_files EXIT TERM INT
+
 VERSION="1.9.7"
 RELEASE_DATE="29/jan/24"
 PROJECT_URL="4st.li/hosty"
@@ -13,15 +42,15 @@ OUTPUT_HOSTS="/etc/hosts"
 
 # @getoptions
 parser_definition() {
-    setup REST help:usage -- "usage: hosty [-airduhv]" ''
-    msg -- 'options:'
-    flag AUTORUN -a --autorun -- "set up autorun with cronie"
-    flag IGNORE_DEFAULT_SOURCES -i --ignore-default-sources -- "ignore default sources"
-    flag RESTORE -r --restore -- "restore the hosts file"
-    flag DEBUG -d --debug -- "run in debug mode"
-    flag UNINSTALL -u --uninstall -- "uninstall hosty from the system"
-    disp :usage -h --help
-    disp VERSION -v --version
+  setup REST help:usage -- "usage: hosty [-airduhv]" ''
+  msg -- 'options:'
+  flag AUTORUN -a --autorun -- "set up autorun with cronie"
+  flag IGNORE_DEFAULT_SOURCES -i --ignore-default-sources -- "ignore default sources"
+  flag RESTORE -r --restore -- "restore the hosts file"
+  flag DEBUG -d --debug -- "run in debug mode"
+  flag UNINSTALL -u --uninstall -- "uninstall hosty from the system"
+  disp :usage -h --help
+  disp VERSION -v --version
 }
 # @end
 
@@ -35,92 +64,92 @@ DEBUG=''
 UNINSTALL=''
 REST=''
 parse() {
-    OPTIND=$(($# + 1))
-    while OPTARG= && [ $# -gt 0 ]; do
-        case $1 in
-        --?*=*)
-            OPTARG=$1
-            shift
-            eval 'set -- "${OPTARG%%\=*}" "${OPTARG#*\=}"' ${1+'"$@"'}
-            ;;
-        --no-* | --without-*) unset OPTARG ;;
-        -[airduhv]?*)
-            OPTARG=$1
-            shift
-            eval 'set -- "${OPTARG%"${OPTARG#??}"}" -"${OPTARG#??}"' ${1+'"$@"'}
-            OPTARG=
-            ;;
-        esac
-        case $1 in
-        '-a' | '--autorun')
-            [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
-            eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
-            AUTORUN="$OPTARG"
-            ;;
-        '-i' | '--ignore-default-sources')
-            [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
-            eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
-            IGNORE_DEFAULT_SOURCES="$OPTARG"
-            ;;
-        '-r' | '--restore')
-            [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
-            eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
-            RESTORE="$OPTARG"
-            ;;
-        '-d' | '--debug')
-            [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
-            eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
-            DEBUG="$OPTARG"
-            ;;
-        '-u' | '--uninstall')
-            [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
-            eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
-            UNINSTALL="$OPTARG"
-            ;;
-        '-h' | '--help')
-            usage
-            exit 0
-            ;;
-        '-v' | '--version')
-            echo "${VERSION}"
-            exit 0
-            ;;
-        --)
-            shift
-            while [ $# -gt 0 ]; do
-                REST="${REST} \"\${$((OPTIND - $#))}\""
-                shift
-            done
-            break
-            ;;
-        [-]?*)
-            set "unknown" "$1"
-            break
-            ;;
-        *)
-            REST="${REST} \"\${$((OPTIND - $#))}\""
-            ;;
-        esac
-        shift
-    done
-    [ $# -eq 0 ] && {
-        OPTIND=1
-        unset OPTARG
-        return 0
-    }
+  OPTIND=$(($# + 1))
+  while OPTARG= && [ $# -gt 0 ]; do
     case $1 in
-    unknown) set "unrecognized option: $2" "$@" ;;
-    noarg) set "does not allow an argument: $2" "$@" ;;
-    required) set "requires an argument: $2" "$@" ;;
-    pattern:*) set "does not match the pattern (${1#*:}): $2" "$@" ;;
-    notcmd) set "not a command: $2" "$@" ;;
-    *) set "validation error ($1): $2" "$@" ;;
+    --?*=*)
+      OPTARG=$1
+      shift
+      eval 'set -- "${OPTARG%%\=*}" "${OPTARG#*\=}"' ${1+'"$@"'}
+      ;;
+    --no-* | --without-*) unset OPTARG ;;
+    -[airduhv]?*)
+      OPTARG=$1
+      shift
+      eval 'set -- "${OPTARG%"${OPTARG#??}"}" -"${OPTARG#??}"' ${1+'"$@"'}
+      OPTARG=
+      ;;
     esac
-    echo "$1" >&2
-    exit 1
+    case $1 in
+    '-a' | '--autorun')
+      [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
+      eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
+      AUTORUN="$OPTARG"
+      ;;
+    '-i' | '--ignore-default-sources')
+      [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
+      eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
+      IGNORE_DEFAULT_SOURCES="$OPTARG"
+      ;;
+    '-r' | '--restore')
+      [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
+      eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
+      RESTORE="$OPTARG"
+      ;;
+    '-d' | '--debug')
+      [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
+      eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
+      DEBUG="$OPTARG"
+      ;;
+    '-u' | '--uninstall')
+      [ "${OPTARG:-}" ] && OPTARG=${OPTARG#*\=} && set "noarg" "$1" && break
+      eval '[ ${OPTARG+x} ] &&:' && OPTARG='1' || OPTARG=''
+      UNINSTALL="$OPTARG"
+      ;;
+    '-h' | '--help')
+      usage
+      exit 0
+      ;;
+    '-v' | '--version')
+      echo "${VERSION}"
+      exit 0
+      ;;
+    --)
+      shift
+      while [ $# -gt 0 ]; do
+        REST="${REST} \"\${$((OPTIND - $#))}\""
+        shift
+      done
+      break
+      ;;
+    [-]?*)
+      set "unknown" "$1"
+      break
+      ;;
+    *)
+      REST="${REST} \"\${$((OPTIND - $#))}\""
+      ;;
+    esac
+    shift
+  done
+  [ $# -eq 0 ] && {
+    OPTIND=1
+    unset OPTARG
+    return 0
+  }
+  case $1 in
+  unknown) set "unrecognized option: $2" "$@" ;;
+  noarg) set "does not allow an argument: $2" "$@" ;;
+  required) set "requires an argument: $2" "$@" ;;
+  pattern:*) set "does not match the pattern (${1#*:}): $2" "$@" ;;
+  notcmd) set "not a command: $2" "$@" ;;
+  *) set "validation error ($1): $2" "$@" ;;
+  esac
+  echo "$1" >&2
+  exit 1
 }
 usage() {
-    cat <<'GETOPTIONSHERE'
+  cat <<'GETOPTIONSHERE'
 usage: hosty [-airduhv]
 
 options:
@@ -136,15 +165,22 @@ GETOPTIONSHERE
 # Generated by getoptions (END)
 # @end
 
+# Function for debug messages
+debug_echo() {
+  if [ "$DEBUG" = 1 ]; then
+    echo "$1"
+  fi
+}
+
 parse "$@"
 eval "set -- $REST"
 
 # check dependences
 checkDep() {
-    command -v "$1" >/dev/null 2>&1 || {
-        echo >&2 "hosty requires '$1' but it's not installed."
-        exit 1
-    }
+  command -v "$1" >/dev/null 2>&1 || {
+    echo >&2 "hosty requires '$1' but it's not installed."
+    exit 1
+  }
 }
 
 checkDep curl
@@ -159,75 +195,93 @@ echo "======== hosty v$VERSION ($RELEASE_DATE) ========"
 echo "========       $PROJECT_URL       ========"
 echo
 
-# avoid all system changes if debug mode is enabled
-if [ "$DEBUG" = 1 ]; then
-    AUTORUN=""
-    UNINSTALL=""
-    OUTPUT_HOSTS=$(mktemp)
-    echo "******** DEBUG MODE ON ********"
-    echo
-fi
-
-# check if running as root
-if [ "$(id -u)" != 0 ] && [ "$DEBUG" != 1 ]; then
+# Function to check for root privileges
+check_root() {
+  if [ "$(id -u)" != 0 ] && [ "$DEBUG" != 1 ]; then
     echo "please run as root."
     exit 1
+  fi
+}
+
+# Function to handle uninstallation
+handle_uninstall() {
+  if [ -d /etc/hosty ]; then
+    # ask user to remove hosty config
+    echo "do you want to remove /etc/hosty configs directory? y/n"
+    read -r answer
+    echo
+
+    if [ "$answer" = "y" ] || [ "$answer" = "Y" ] || [ "$answer" = "yes" ] || [ "$answer" = "YES" ]; then
+      echo "removing hosty configs directory..."
+      rm -R /etc/hosty
+      echo
+    elif [ "$answer" != "n" ] && [ "$answer" != "N" ] && [ "$answer" != "no" ] && [ "$answer" != "NO" ]; then
+      echo "bad answer, exiting..."
+      exit 1
+    fi
+  fi
+
+  # remove autorun config
+  if [ -f /etc/cron.daily/hosty ]; then
+    echo "removing /etc/cron.daily/hosty..."
+    rm /etc/cron.daily/hosty
+    echo
+  fi
+
+  if [ -f /etc/cron.weekly/hosty ]; then
+    echo "removing /etc/cron.weekly/hosty..."
+    rm /etc/cron.weekly/hosty
+    echo
+  fi
+
+  if [ -f /etc/cron.monthly/hosty ]; then
+    echo "removing /etc/cron.monthly/hosty..."
+    rm /etc/cron.monthly/hosty
+    echo
+  fi
+
+  previous_crontab=$(mktemp)
+  if crontab -l 2>/dev/null >"$previous_crontab" && grep "/usr/local/bin/hosty" "$previous_crontab" >/dev/null 2>&1; then
+    echo "removing from crontab..."
+    new_crontab=$(mktemp)
+    awk '!/\/usr\/local\/bin\/hosty/' "$previous_crontab" >"$new_crontab"
+    crontab "$new_crontab"
+    echo
+  fi
+
+  if [ -f /usr/local/bin/hosty ]; then
+    echo "uninstalling hosty..."
+    rm /usr/local/bin/hosty
+    echo
+  fi
+
+  echo "hosty uninstalled."
+  exit 0
+}
+
+# Function to handle restoration of hosts file
+handle_restore() {
+  # remove empty lines from begin and end
+  awk 'NR==FNR{if (NF) { if (!beg) beg=NR; end=NR } next} FNR>=beg && FNR<=end' "$user_hosts_file" "$user_hosts_file" >"$OUTPUT_HOSTS"
+  echo "$OUTPUT_HOSTS restore completed."
+  exit 0
+}
+
+# avoid all system changes if debug mode is enabled
+if [ "$DEBUG" = 1 ]; then
+  AUTORUN=""
+  UNINSTALL=""
+  OUTPUT_HOSTS=$(mktemp)
+  debug_echo "******** DEBUG MODE ON ********"
+  debug_echo "Output hosts file: $OUTPUT_HOSTS"
+  echo
 fi
+
+check_root
 
 # --uninstall option
 if [ "$UNINSTALL" = 1 ]; then
-    if [ -d /etc/hosty ]; then
-        # ask user to remove hosty config
-        echo "do you want to remove /etc/hosty configs directory? y/n"
-        read -r answer
-        echo
-
-        if [ "$answer" = "y" ] || [ "$answer" = "Y" ] || [ "$answer" = "yes" ] || [ "$answer" = "YES" ]; then
-            echo "removing hosty configs directory..."
-            rm -R /etc/hosty
-            echo
-        elif [ "$answer" != "n" ] && [ "$answer" != "N" ] && [ "$answer" != "no" ] && [ "$answer" != "NO" ]; then
-            echo "bad answer, exiting..."
-            exit 1
-        fi
-    fi
-
-    # remove autorun config
-    if [ -f /etc/cron.daily/hosty ]; then
-        echo "removing /etc/cron.daily/hosty..."
-        rm /etc/cron.daily/hosty
-        echo
-    fi
-
-    if [ -f /etc/cron.weekly/hosty ]; then
-        echo "removing /etc/cron.weekly/hosty..."
-        rm /etc/cron.weekly/hosty
-        echo
-    fi
-
-    if [ -f /etc/cron.monthly/hosty ]; then
-        echo "removing /etc/cron.monthly/hosty..."
-        rm /etc/cron.monthly/hosty
-        echo
-    fi
-
-    previous_crontab=$(mktemp)
-    if crontab -l 2>/dev/null >"$previous_crontab" && grep "/usr/local/bin/hosty" "$previous_crontab" >/dev/null 2>&1; then
-        echo "removing from crontab..."
-        new_crontab=$(mktemp)
-        awk '!/\/usr\/local\/bin\/hosty/' "$previous_crontab" >"$new_crontab"
-        crontab "$new_crontab"
-        echo
-    fi
-
-    if [ -f /usr/local/bin/hosty ]; then
-        echo "uninstalling hosty..."
-        rm /usr/local/bin/hosty
-        echo
-    fi
-
-    echo "hosty uninstalled."
-    exit 0
+  handle_uninstall
 fi
 
 # copy original hosts file and handle --restore
@@ -236,211 +290,241 @@ user_hosts_linesnumber=$(awk '/^# [aA]d blocking hosts generated/ {counter=NR} E
 
 # if hosty has never been executed, don't restore anything
 if [ "$user_hosts_linesnumber" -lt 0 ]; then
-    if [ "$RESTORE" = 1 ]; then
-        echo "there is nothing to restore."
-        exit 0
-    fi
+  if [ "$RESTORE" = 1 ]; then
+    debug_echo "Restore flag is set."
+    handle_restore
+  fi
 
-    # if it's the first time running hosty, save the whole /etc/hosts file in the tmp var
-    cat "$INPUT_HOSTS" >"$user_hosts_file"
+  # if it's the first time running hosty, save the whole /etc/hosts file in the tmp var
+  cat "$INPUT_HOSTS" >"$user_hosts_file"
 else
-    # copy original hosts lines
-    head -n "$user_hosts_linesnumber" "$INPUT_HOSTS" >"$user_hosts_file"
+  # copy original hosts lines
+  head -n "$user_hosts_linesnumber" "$INPUT_HOSTS" >"$user_hosts_file"
 
-    # if --restore is present, restore original hosts and exit
-    if [ "$RESTORE" = 1 ]; then
-        # remove empty lines from begin and end
-        awk 'NR==FNR{if (NF) { if (!beg) beg=NR; end=NR } next} FNR>=beg && FNR<=end' "$user_hosts_file" "$user_hosts_file" >"$OUTPUT_HOSTS"
-        echo "$OUTPUT_HOSTS restore completed."
-        exit 0
-    fi
+  # if --restore is present, restore original hosts and exit
+  if [ "$RESTORE" = 1 ]; then
+    debug_echo "Restore flag is set."
+    handle_restore
+  fi
 fi
+
+# Function to handle autorun setup
+handle_autorun() {
+  echo "configuring autorun..."
+
+  # check system compatibility
+  checkDep crontab
+
+  # remove old config
+  if [ -f /etc/cron.daily/hosty ]; then
+    echo
+    echo "removing /etc/cron.daily/hosty..."
+    rm /etc/cron.daily/hosty
+  fi
+
+  if [ -f /etc/cron.weekly/hosty ]; then
+    echo
+    echo "removing /etc/cron.weekly/hosty..."
+    rm /etc/cron.weekly/hosty
+  fi
+
+  if [ -f /etc/cron.monthly/hosty ]; then
+    echo
+    echo "removing /etc/cron.monthly/hosty..."
+    rm /etc/cron.monthly/hosty
+  fi
+
+  # if user have passed the --ignore-default-sources argument, autorun with that
+  if [ "$IGNORE_DEFAULT_SOURCES" != 1 ]; then
+    hosty_cmd="/usr/local/bin/hosty"
+  else
+    echo
+    echo "autorunning with --ignore-default-sources..."
+    hosty_cmd="/usr/local/bin/hosty -i"
+  fi
+
+  # ask user for autorun period
+  echo
+  echo "how often do you want to run hosty automatically?"
+  echo "enter 'daily', 'weekly', 'monthly' or 'never':"
+  read -r period
+
+  # clean crontab from previous config
+  previous_crontab=$(mktemp)
+  (crontab -l 2>/dev/null || true) >"$previous_crontab"
+  new_crontab=$(mktemp)
+  awk '!/\/usr\/local\/bin\/hosty/' "$previous_crontab" >"$new_crontab"
+
+  # check user answer
+  if [ "$period" = "daily" ]; then
+    echo "0 0 * * * $hosty_cmd" >>"$new_crontab"
+    crontab "$new_crontab"
+  elif [ "$period" = "weekly" ]; then
+    echo "0 0 * * 0 $hosty_cmd" >>"$new_crontab"
+    crontab "$new_crontab"
+  elif [ "$period" = "monthly" ]; then
+    echo "0 0 1 * * $hosty_cmd" >>"$new_crontab"
+    crontab "$new_crontab"
+  elif [ "$period" = "never" ]; then
+    if grep "/usr/local/bin/hosty" "$previous_crontab" >/dev/null 2>&1; then
+      crontab "$new_crontab"
+    fi
+  else
+    echo
+    echo "bad answer, exiting..."
+    exit 1
+  fi
+
+  echo
+  echo "done."
+  exit 0
+}
 
 # cron options
 if [ "$AUTORUN" = 1 ]; then
-    echo "configuring autorun..."
-
-    # check system compatibility
-    checkDep crontab
-
-    # remove old config
-    if [ -f /etc/cron.daily/hosty ]; then
-        echo
-        echo "removing /etc/cron.daily/hosty..."
-        rm /etc/cron.daily/hosty
-    fi
-
-    if [ -f /etc/cron.weekly/hosty ]; then
-        echo
-        echo "removing /etc/cron.weekly/hosty..."
-        rm /etc/cron.weekly/hosty
-    fi
-
-    if [ -f /etc/cron.monthly/hosty ]; then
-        echo
-        echo "removing /etc/cron.monthly/hosty..."
-        rm /etc/cron.monthly/hosty
-    fi
-
-    # if user have passed the --ignore-default-sources argument, autorun with that
-    if [ "$IGNORE_DEFAULT_SOURCES" != 1 ]; then
-        hosty_cmd="/usr/local/bin/hosty"
-    else
-        echo
-        echo "autorunning with --ignore-default-sources..."
-        hosty_cmd="/usr/local/bin/hosty -i"
-    fi
-
-    # ask user for autorun period
-    echo
-    echo "how often do you want to run hosty automatically?"
-    echo "enter 'daily', 'weekly', 'monthly' or 'never':"
-    read -r period
-
-    # clean crontab from previous config
-    previous_crontab=$(mktemp)
-    (crontab -l 2>/dev/null || true) >"$previous_crontab"
-    new_crontab=$(mktemp)
-    awk '!/\/usr\/local\/bin\/hosty/' "$previous_crontab" >"$new_crontab"
-
-    # check user answer
-    if [ "$period" = "daily" ]; then
-        echo "0 0 * * * $hosty_cmd" >>"$new_crontab"
-        crontab "$new_crontab"
-    elif [ "$period" = "weekly" ]; then
-        echo "0 0 * * 0 $hosty_cmd" >>"$new_crontab"
-        crontab "$new_crontab"
-    elif [ "$period" = "monthly" ]; then
-        echo "0 0 1 * * $hosty_cmd" >>"$new_crontab"
-        crontab "$new_crontab"
-    elif [ "$period" = "never" ]; then
-        if grep "/usr/local/bin/hosty" "$previous_crontab" >/dev/null 2>&1; then
-            crontab "$new_crontab"
-        fi
-    else
-        echo
-        echo "bad answer, exiting..."
-        exit 1
-    fi
-
-    echo
-    echo "done."
-    exit 0
+  handle_autorun
 fi
 
-# function to download sources
-downloadFile() {
-    tmp_downloadFile=$(mktemp)
-
-    echo "downloading $1"
-    if ! curl -sSL --retry 3 -o "$tmp_downloadFile" "$1"; then
-        echo "error downloading $1"
-        rm "$tmp_downloadFile"
-        exit 1
-    fi
+# Function to download a single source list
+# Arguments: $1 = URL, $2 = destination file
+download_sources_list() {
+  local url="$1"
+  local dest_file="$2"
+  debug_echo "Downloading sources list from $url to $dest_file"
+  if ! curl -sSL --retry 3 -o "$dest_file" "$url"; then
+    echo "Error downloading $url"
+    # Specific cleanup for this function's temp file is handled by the main trap
+    exit 1
+  fi
 }
+
+# Function to download multiple lists from a source file and merge them
+# Arguments: $1 = file containing list of URLs, $2 = target file to append to
+download_and_merge_lists() {
+  local list_source_file="$1"
+  local target_file="$2"
+  local current_url=""
+
+  debug_echo "Downloading and merging lists from $list_source_file to $target_file"
+  tmp_downloadFile=$(mktemp) # Used by this function to download individual files before appending
+
+  while read -r current_url; do
+    if [ -n "$current_url" ]; then # ensure line is not empty
+      echo "downloading $current_url"
+      if ! curl -sSL --retry 3 -o "$tmp_downloadFile" "$current_url"; then
+        echo "Error downloading $current_url"
+        # tmp_downloadFile will be cleaned by the main trap
+        exit 1
+      fi
+      cat "$tmp_downloadFile" >> "$target_file"
+      # Clear tmp_downloadFile for next iteration (optional, as curl overwrites)
+      # > "$tmp_downloadFile"
+    fi
+  done <"$list_source_file"
+  # tmp_downloadFile is removed by the main trap
+}
+
 
 blacklist_sources=$(mktemp)
 whitelist_sources=$(mktemp)
 
 # remove default sources if the user want that
 if [ "$IGNORE_DEFAULT_SOURCES" != 1 ]; then
-    echo "downloading default sources..."
+  debug_echo "Downloading default sources..."
+  tmp_downloadFile_default_blacklist=$(mktemp)
+  download_sources_list "$BLACKLIST_DEFAULT_SOURCE" "$tmp_downloadFile_default_blacklist"
+  cat "$tmp_downloadFile_default_blacklist" >>"$blacklist_sources"
+  rm "$tmp_downloadFile_default_blacklist" # Clean up specific temp file
 
-    downloadFile "$BLACKLIST_DEFAULT_SOURCE"
-    cat "$tmp_downloadFile" >>"$blacklist_sources"
-    rm "$tmp_downloadFile"
-
-    downloadFile "$WHITELIST_DEFAULT_SOURCE"
-    cat "$tmp_downloadFile" >>"$whitelist_sources"
-    rm "$tmp_downloadFile"
+  tmp_downloadFile_default_whitelist=$(mktemp)
+  download_sources_list "$WHITELIST_DEFAULT_SOURCE" "$tmp_downloadFile_default_whitelist"
+  cat "$tmp_downloadFile_default_whitelist" >>"$whitelist_sources"
+  rm "$tmp_downloadFile_default_whitelist" # Clean up specific temp file
 fi
 
 # user custom blacklist sources
 if [ -f /etc/hosty/blacklist.sources ]; then
-    echo
-    echo "adding custom blacklist sources..."
-    cat /etc/hosty/blacklist.sources >>"$blacklist_sources"
+  debug_echo "Adding custom blacklist sources..."
+  cat /etc/hosty/blacklist.sources >>"$blacklist_sources"
 fi
 
 # user custom whitelist sources
 if [ -f /etc/hosty/whitelist.sources ]; then
-    echo
-    echo "adding custom whitelist sources..."
-    cat /etc/hosty/whitelist.sources >>"$whitelist_sources"
+  debug_echo "Adding custom whitelist sources..."
+  cat /etc/hosty/whitelist.sources >>"$whitelist_sources"
 fi
 
 echo
 echo "downloading blacklists..."
 blacklist_domains=$(mktemp)
-
-# download blacklist sources and merge into one
-while read -r line; do
-    downloadFile "$line"
-    cat "$tmp_downloadFile" >>"$blacklist_domains"
-    rm "$tmp_downloadFile"
-done <"$blacklist_sources"
+download_and_merge_lists "$blacklist_sources" "$blacklist_domains"
 
 if [ -f /etc/hosty/blacklist ]; then
-    echo
-    echo "applying user custom blacklist..."
-    cat "/etc/hosty/blacklist" >>"$blacklist_domains"
+  debug_echo "Applying user custom blacklist..."
+  cat "/etc/hosty/blacklist" >>"$blacklist_domains"
 fi
 
-# take all domains of any text file
-extractDomains() {
-    echo
-    echo "extracting domains..."
-    tmp_domains=$(mktemp)
-    # remove lines that don't start with a letter/number/: (ignoring whitespace)
-    awk '/^\s*[a-zA-Z0-9:]/' "$1" >"$tmp_domains"
-    cp "$tmp_domains" "$1"
-    # remove '#' and everything that follows
-    awk '{gsub(/#.*/,""); print}' "$1" >"$tmp_domains"
-    cp "$tmp_domains" "$1"
-    # replace with new lines everything that isn't letters, numbers, hyphens and dots
-    awk '{gsub(/[^a-zA-Z0-9\.\-]/,"\n"); print}' "$1" >"$tmp_domains"
-    cp "$tmp_domains" "$1"
-    # remove lines that don't have a dot&letter
-    awk '/\./ && /[a-zA-Z]/' "$1" >"$tmp_domains"
-    cp "$tmp_domains" "$1"
-    # remove lines that end/start with a hyphen/dot
-    awk '!/^[\.\-]|[\.\-]$/' "$1" >"$tmp_domains"
-    cp "$tmp_domains" "$1"
-    # remove duplicates and sort
-    awk '!x[$0]++' "$1" >"$tmp_domains"
-    sort "$tmp_domains" >"$1"
-    rm "$tmp_domains"
-    # count extacted domains
-    domains_counter=$(awk 'BEGIN{counter=0}{counter++;}END{print counter}' "$1")
-    echo "$domains_counter domains extracted."
+# Function to process a domain list file
+# Arguments: $1 = file path of the domain list
+process_domain_list() {
+  local domain_file="$1"
+  local original_file_path="$domain_file" # Save original path for final move
+  debug_echo "Processing domain list: $domain_file"
+
+  # Create a temporary file for processing steps to avoid issues with concurrent reads/writes
+  tmp_domains_processing=$(mktemp)
+  cp "$domain_file" "$tmp_domains_processing"
+
+  # remove lines that don't start with a letter/number/: (ignoring whitespace)
+  # remove '#' and everything that follows
+  # replace with new lines everything that isn't letters, numbers, hyphens and dots
+  # remove lines that don't have a dot&letter
+  # remove lines that end/start with a hyphen/dot
+  awk '
+    /^\s*[a-zA-Z0-9:]/ {
+      gsub(/#.*/,"");
+      gsub(/[^a-zA-Z0-9\.\-]/,"\n");
+      if (/\./ && /[a-zA-Z]/ && !/^[\.\-]/ && !/[\.\-]$/) {
+        print
+      }
+    }
+  ' "$tmp_domains_processing" > "$domain_file" # First stage output to original file to save space for large lists
+
+  # remove duplicates and sort (using a temp file for sort -u)
+  tmp_domains_sorted=$(mktemp)
+  sort -u "$domain_file" > "$tmp_domains_sorted"
+  mv "$tmp_domains_sorted" "$domain_file" # Overwrite original file with sorted, unique list
+
+  # Clean up intermediate processing file
+  rm -f "$tmp_domains_processing" "$tmp_domains_sorted" # Ensure tmp_domains_sorted is also removed
+
+  # count extracted domains
+  domains_counter=$(awk 'BEGIN{counter=0}{if (NF > 0) counter++;}END{print counter}' "$domain_file")
+  debug_echo "$domains_counter domains extracted from $original_file_path." # Changed to debug_echo
 }
 
 # extract domains from blacklist sources
-extractDomains "$blacklist_domains"
+process_domain_list "$blacklist_domains"
 
 echo
 echo "downloading whitelists..."
 whitelist_domains=$(mktemp)
-
-# download whitelist sources and merge into one
-while read -r line; do
-    downloadFile "$line"
-    cat "$tmp_downloadFile" >>"$whitelist_domains"
-    rm "$tmp_downloadFile"
-done <"$whitelist_sources"
+download_and_merge_lists "$whitelist_sources" "$whitelist_domains"
 
 if [ -f /etc/hosty/whitelist ]; then
-    echo
-    echo "applying user custom whitelist..."
-    cat "/etc/hosty/whitelist" >>"$whitelist_domains"
+  debug_echo "Applying user custom whitelist..."
+  cat "/etc/hosty/whitelist" >>"$whitelist_domains"
 fi
 
 # whitelist sources and original hosts file domains
-cat "$blacklist_sources" "$whitelist_sources" "$user_hosts_file" >>"$whitelist_domains"
+# Make sure these files exist and are not empty before catting
+if [ -s "$blacklist_sources" ]; then cat "$blacklist_sources" >>"$whitelist_domains"; fi
+if [ -s "$whitelist_sources" ]; then cat "$whitelist_sources" >>"$whitelist_domains"; fi
+if [ -s "$user_hosts_file" ]; then cat "$user_hosts_file" >>"$whitelist_domains"; fi
+
 
 # extract domains from whitelist sources
-extractDomains "$whitelist_domains"
+process_domain_list "$whitelist_domains"
 
 echo
 echo "building $OUTPUT_HOSTS"
@@ -451,19 +535,28 @@ awk 'NR==FNR{if (NF) { if (!beg) beg=NR; end=NR } next} FNR>=beg && FNR<=end' "$
 
 # add blank line at the end
 {
-    echo
-    echo "# Ad blocking hosts generated $(date)"
-    echo "# Don't write below this line. It will be lost if you run hosty again."
+  echo
+  echo "# Ad blocking hosts generated $(date)"
+  echo "# Don't write below this line. It will be lost if you run hosty again."
 } >>"$final_hosts_file"
 
 echo
 echo "cleaning and de-duplicating..."
 
 # applying the whitelist and dedup
+# This awk command processes two files: whitelist_domains and blacklist_domains.
+# 1. For the first file (FNR==NR, whitelist_domains):
+#    It populates an array 'arr' with every domain found as a key. arr[$1]++ increments the count (or sets to 1 if new).
+# 2. For the second file (FNR!=NR, blacklist_domains):
+#    It checks if a domain $1 from this file is NOT present in the 'arr' (the whitelist).
+#    If !arr[$1]++ (domain not in whitelist, or first time seeing it here and it wasn't in whitelist),
+#    it prints the BLOCK_IP followed by the domain $1.
+# This effectively removes any blacklisted domain that also exists in the whitelist.
 awk -v ip="$BLOCK_IP" 'FNR==NR {arr[$1]++} FNR!=NR {if (!arr[$1]++) print ip, $1}' "$whitelist_domains" "$blacklist_domains" >>"$final_hosts_file"
 
 # remove tmp files
-rm "$blacklist_domains" "$whitelist_domains" "$user_hosts_file"
+# Note: user_hosts_file is already added to the main trap for cleanup.
+# blacklist_sources and whitelist_sources are also handled by the main trap.
 
 # count websites blocked
 websites_blocked_counter=$(awk "/$BLOCK_IP/ {count++} END{print count}" "$final_hosts_file")
